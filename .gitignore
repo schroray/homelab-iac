@@ -1,0 +1,30 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Ansible
+*.retry
+.ansible/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.secret.yml
+.vault_pass
+.vault-password
+
+# Keys / certificates
+*.key
+*.pem
+
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# OS
+.DS_Store
+Thumbs.db

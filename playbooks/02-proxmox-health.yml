@@ -1,0 +1,63 @@
+---
+- name: Validate Proxmox cluster health
+  hosts: localhost
+  gather_facts: false
+
+  vars_files:
+    - ../vars/proxmox.yml
+
+  pre_tasks:
+    - name: Validate Proxmox API credentials
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'PROXMOX_USER') | length > 0
+          - lookup('ansible.builtin.env', 'PROXMOX_TOKEN_ID') | length > 0
+          - lookup('ansible.builtin.env', 'PROXMOX_TOKEN_SECRET') | length > 0
+        fail_msg: >-
+          Proxmox API credentials are missing.
+          Load the local .env file before running the playbook.
+
+  tasks:
+    - name: Get Proxmox node information
+      community.proxmox.proxmox_node_info:
+        api_host: "{{ proxmox_api_host }}"
+        api_port: "{{ proxmox_api_port }}"
+        api_user: "{{ lookup('ansible.builtin.env', 'PROXMOX_USER') }}"
+        api_token_id: "{{ lookup('ansible.builtin.env', 'PROXMOX_TOKEN_ID') }}"
+        api_token_secret: "{{ lookup('ansible.builtin.env', 'PROXMOX_TOKEN_SECRET') }}"
+        validate_certs: "{{ proxmox_validate_certs }}"
+      register: proxmox_node_info
+
+    - name: Build list of discovered Proxmox nodes
+      ansible.builtin.set_fact:
+        proxmox_discovered_nodes: >-
+          {{
+            proxmox_node_info.proxmox_nodes
+            | map(attribute='node')
+            | list
+          }}
+
+    - name: Verify expected Proxmox nodes are present
+      ansible.builtin.assert:
+        that:
+          - item in proxmox_discovered_nodes
+        fail_msg: "Expected Proxmox node {{ item }} was not discovered."
+        success_msg: "Proxmox node {{ item }} was discovered."
+      loop: "{{ proxmox_expected_nodes }}"
+
+    - name: Verify Proxmox nodes are online
+      ansible.builtin.assert:
+        that:
+          - item.status == 'online'
+        fail_msg: "Proxmox node {{ item.node }} is not online."
+        success_msg: "Proxmox node {{ item.node }} is online."
+      loop: "{{ proxmox_node_info.proxmox_nodes }}"
+      loop_control:
+        label: "{{ item.node }}"
+
+    - name: Show cluster validation result
+      ansible.builtin.debug:
+        msg: >-
+          Proxmox cluster validation successful.
+          Expected nodes={{ proxmox_expected_nodes | length }},
+          discovered nodes={{ proxmox_discovered_nodes | length }}.

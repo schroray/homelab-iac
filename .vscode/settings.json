@@ -1,0 +1,4 @@
+{
+  "ansible.validation.lint.enabled": true,
+  "ansible.validation.lint.executablePath": "/home/raysc/.venvs/ansible/bin/ansible-lint"
+}
