@@ -1,0 +1,24 @@
+---
+proxmox_vms:
+  - name: vm-test-01
+    vmid: 200
+    target_node: proxmox-01
+    template_vmid: 8000
+
+    cpu:
+      cores: 2
+
+    memory:
+      mb: 4096
+
+    disk:
+      storage: nvme01-thin
+      size_gb: 32
+
+    network:
+      bridge: vmbr0
+      vlan: null
+
+    cloud_init:
+      ipconfig0: dhcp
+      user: ansible

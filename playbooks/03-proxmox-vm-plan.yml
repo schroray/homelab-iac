@@ -1,0 +1,60 @@
+---
+- name: Validate planned Proxmox virtual machines
+  hosts: localhost
+  gather_facts: false
+
+  vars_files:
+    - ../vars/proxmox.yml
+    - ../vars/vms.yml
+
+  tasks:
+    - name: Verify VM definitions exist
+      ansible.builtin.assert:
+        that:
+          - proxmox_vms is defined
+          - proxmox_vms | length > 0
+        fail_msg: "No Proxmox VM definitions were found."
+
+    - name: Validate unique VMIDs and names
+      ansible.builtin.assert:
+        that:
+          - proxmox_vms | map(attribute='vmid') | list | unique | length == proxmox_vms | length
+          - proxmox_vms | map(attribute='name') | list | unique | length == proxmox_vms | length
+        fail_msg: "Duplicate VMIDs or VM names detected."
+        success_msg: "VMIDs and names are unique."
+
+    - name: Validate required VM parameters
+      ansible.builtin.assert:
+        that:
+          - item.name | length > 0
+          - item.vmid | int > 0
+          - item.target_node | length > 0
+          - item.template_vmid | int > 0
+          - item.cpu.cores | int > 0
+          - item.memory.mb | int >= 1024
+          - item.disk.size_gb | int > 0
+          - item.disk.storage | length > 0
+          - item.network.bridge | length > 0
+        fail_msg: "VM definition {{ item.name }} is incomplete."
+        success_msg: "VM definition {{ item.name }} is valid."
+        quiet: true
+      loop: "{{ proxmox_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Show planned virtual machines
+      ansible.builtin.debug:
+        msg:
+          - "VM: {{ item.name }}"
+          - "VMID: {{ item.vmid }}"
+          - "Node: {{ item.target_node }}"
+          - "Template VMID: {{ item.template_vmid }}"
+          - "CPU: {{ item.cpu.cores }} cores"
+          - "Memory: {{ item.memory.mb }} MB"
+          - "Disk: {{ item.disk.size_gb }} GB on {{ item.disk.storage }}"
+          - "Bridge: {{ item.network.bridge }}"
+          - "VLAN: {{ item.network.vlan | default('none', true) }}"
+          - "IP: {{ item.cloud_init.ipconfig0 }}"
+      loop: "{{ proxmox_vms }}"
+      loop_control:
+        label: "{{ item.name }}"
