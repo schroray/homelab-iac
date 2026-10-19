@@ -1,0 +1,130 @@
+---
+- name: Preflight checks for Proxmox VM provisioning
+  hosts: localhost
+  gather_facts: false
+
+  vars_files:
+    - ../vars/vms.yml
+
+  vars:
+    vm: "{{ proxmox_vms[0] }}"
+
+    api_host: >-
+      {{ lookup('env', 'PROXMOX_API_HOST')
+         | default(hostvars[vm.target_node].ansible_host, true) }}
+
+    api_url: "https://{{ api_host }}:8006/api2/json"
+
+    api_user: "{{ lookup('env', 'PROXMOX_USER') }}"
+    token_id: "{{ lookup('env', 'PROXMOX_TOKEN_ID') }}"
+    token_secret: "{{ lookup('env', 'PROXMOX_TOKEN_SECRET') }}"
+
+    token_identity: >-
+      {{ token_id if '!' in token_id
+         else api_user ~ '!' ~ token_id }}
+
+  tasks:
+
+    - name: Validate input and API credentials
+      ansible.builtin.assert:
+        that:
+          - proxmox_vms | length == 1
+          - vm.target_node in groups['proxmox_nodes']
+          - api_user | length > 0
+          - token_id | length > 0
+          - token_secret | length > 0
+        fail_msg: "Preflight input or API credentials missing."
+        quiet: true
+
+    - name: Query Proxmox resources
+      ansible.builtin.uri:
+        url: "{{ api_url }}{{ item }}"
+        method: GET
+        headers:
+          Authorization: >-
+            PVEAPIToken={{ token_identity }}={{ token_secret }}
+        validate_certs: true
+        ca_path: >-
+          {{ lookup('env', 'PROXMOX_CA_BUNDLE')
+             | default(omit, true) }}
+        use_proxy: false
+        use_netrc: false
+        follow_redirects: none
+        status_code: 200
+      loop:
+        - "/cluster/resources?type=vm"
+        - "/nodes/{{ vm.target_node }}/storage"
+        - "/nodes/{{ vm.target_node }}/network"
+      register: api_results
+      no_log: true
+
+    - name: Extract Proxmox resources
+      ansible.builtin.set_fact:
+        cluster_vms: "{{ api_results.results[0].json.data }}"
+        node_storages: "{{ api_results.results[1].json.data }}"
+        node_networks: "{{ api_results.results[2].json.data }}"
+
+    - name: Select template storage and bridge
+      ansible.builtin.set_fact:
+        template_info: >-
+          {{ cluster_vms
+             | selectattr('vmid', 'equalto', vm.template_vmid)
+             | first | default({}) }}
+        storage_info: >-
+          {{ node_storages
+             | selectattr('storage', 'equalto', vm.disk.storage)
+             | first | default({}) }}
+        bridge_info: >-
+          {{ node_networks
+             | selectattr('iface', 'equalto', vm.network.bridge)
+             | first | default({}) }}
+
+    - name: Validate VMID availability
+      ansible.builtin.assert:
+        that:
+          - >-
+            (vm.vmid | int) not in
+            (cluster_vms | map(attribute='vmid')
+             | map('int') | list)
+        fail_msg: "VMID {{ vm.vmid }} is already allocated."
+        success_msg: "VMID {{ vm.vmid }} is available."
+
+    - name: Validate source template
+      ansible.builtin.assert:
+        that:
+          - template_info | length > 0
+          - template_info.node | default('') == vm.target_node
+          - template_info.template | default(0) | int == 1
+        fail_msg: "Template is missing or on the wrong node."
+        success_msg: "Template {{ vm.template_vmid }} is valid."
+
+    - name: Validate storage
+      ansible.builtin.assert:
+        that:
+          - storage_info | length > 0
+          - storage_info.active | default(0) | int == 1
+          - "'images' in (storage_info.content | default(''))"
+          - >-
+            (storage_info.avail | default(0) | int) >=
+            (vm.disk.size_gb | int * 1024 * 1024 * 1024)
+        fail_msg: "Storage unavailable, unsuitable or insufficient."
+        success_msg: "Storage {{ vm.disk.storage }} is valid."
+
+    - name: Validate network bridge
+      ansible.builtin.assert:
+        that:
+          - bridge_info | length > 0
+          - bridge_info.type | default('') in ['bridge', 'OVSBridge']
+        fail_msg: "Network bridge {{ vm.network.bridge }} not found."
+        success_msg: "Network bridge {{ vm.network.bridge }} is valid."
+
+    - name: Show preflight result
+      ansible.builtin.debug:
+        msg:
+          - "Preflight PASSED"
+          - "VM: {{ vm.name }}"
+          - "VMID: {{ vm.vmid }}"
+          - "Node: {{ vm.target_node }}"
+          - "Template: {{ vm.template_vmid }}"
+          - "Storage: {{ vm.disk.storage }}"
+          - "Bridge: {{ vm.network.bridge }}"
